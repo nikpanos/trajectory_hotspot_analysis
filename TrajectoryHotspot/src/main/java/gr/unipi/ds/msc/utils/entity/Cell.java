@@ -5,7 +5,9 @@ import gr.unipi.ds.msc.utils.broadcast.Params;
 import gr.unipi.ds.msc.utils.broadcast.Statistics;
 import scala.Tuple2;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 public class Cell {
@@ -113,6 +115,72 @@ public class Cell {
 	public long getT() {
 		return t;
 	}
+
+	public String getPolygonWkt() {
+	    double[][] coords = new double[2][2];
+	    coords[0][0] = (x * params.cellSize) + params.longitudeMin;
+        coords[0][1] = (y * params.cellSize) + params.latitudeMin;
+        coords[1][0] = coords[0][0] + params.cellSize;
+        coords[1][1] = coords[0][1] + params.cellSize;
+        StringBuilder builder = new StringBuilder("POLYGON ((");
+
+        builder.append(coords[0][0]);
+        builder.append(' ');
+        builder.append(coords[0][1]);
+        builder.append(", ");
+
+        builder.append(coords[0][0]);
+        builder.append(' ');
+        builder.append(coords[1][1]);
+        builder.append(", ");
+
+        builder.append(coords[1][0]);
+        builder.append(' ');
+        builder.append(coords[1][1]);
+        builder.append(", ");
+
+        builder.append(coords[1][0]);
+        builder.append(' ');
+        builder.append(coords[0][1]);
+        builder.append(", ");
+
+        builder.append(coords[0][0]);
+        builder.append(' ');
+        builder.append(coords[0][1]);
+
+        builder.append("))");
+        return builder.toString();
+    }
+
+    public String getTemporalBoxStr(SimpleDateFormat sdf) {
+	    long lstep = ((long)params.dateStep);
+        Date dStart = new Date();
+        Date dEnd = new Date();
+        dStart.setTime((t * lstep) + params.dateMin);
+        dEnd.setTime(dStart.getTime() + lstep);
+        StringBuilder builder = new StringBuilder("[");
+        builder.append(sdf.format(dStart))
+                .append(", ")
+                .append(sdf.format(dEnd))
+                .append(')');
+        return builder.toString();
+    }
+
+    public String getTemporalStartStr(SimpleDateFormat sdf) {
+        long lstep = ((long)params.dateStep);
+        Date dStart = new Date();
+        dStart.setTime((t * lstep) + params.dateMin);
+        return sdf.format(dStart);
+    }
+
+    public String getTemporalEndStr(SimpleDateFormat sdf) {
+        long lstep = ((long)params.dateStep);
+        Date dStart = new Date();
+        Date dEnd = new Date();
+        dStart.setTime((t * lstep) + params.dateMin);
+        dEnd.setTime(dStart.getTime() + lstep);
+        return sdf.format(dEnd);
+    }
 
 /*
     private double getSumNeighborWeightsNaive() {

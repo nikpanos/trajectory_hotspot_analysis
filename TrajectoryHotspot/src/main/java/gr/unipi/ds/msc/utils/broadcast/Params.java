@@ -24,6 +24,9 @@ public class Params implements Serializable {
 	public double cellSize;			// size of a segment in x and y dimensions
 	public int outputNumber;		// number of top-k cells found
 	public long neighborDistance;   // size of neighborhood
+	public long executionStart;
+	public long executionEnd;
+	public long requestId;
 	
 	/**
 	 * {@link Params} first constructor.

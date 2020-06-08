@@ -2,11 +2,16 @@ package gr.unipi.ds.msc;
 
 import java.io.IOException;
 import java.text.ParseException;
+import java.util.Date;
 
+import com.typesafe.config.Config;
 import gr.unipi.ds.msc.analysis.PDatasetAnalysis;
+import gr.unipi.ds.msc.common.AppConfig;
+import gr.unipi.ds.msc.utils.broadcast.Params;
 import gr.unipi.ds.msc.utils.enums.AnalysisError;
 import gr.unipi.ds.msc.utils.enums.InputArgument;
 import gr.unipi.ds.msc.utils.exception.AnalysisException;
+import org.apache.spark.sql.SparkSession;
 
 /**
  * The class that contains the entry point of the job
@@ -14,8 +19,16 @@ import gr.unipi.ds.msc.utils.exception.AnalysisException;
 public class App {
 
 	public static void main(String[] args) throws Exception {
+		long executionStart = System.currentTimeMillis();
+		if ((args != null) && (args.length == 1)) {
+			AppConfig.initiate(args[0]);
+		}
+		else {
+			AppConfig.initiate(null);
+		}
+		Config conf = AppConfig.getConfig();
 		//Initialize the job params with default values
-		String pathToInput = "";
+		/*String pathToInput = "";
 		String pathToOutput = "";
 		for (int i = 0; i < args.length; i+=2) {
 			InputArgument inputArgument = InputArgument.fromValue(args[i]);
@@ -82,8 +95,16 @@ public class App {
 						throw new AnalysisException(AnalysisError.INPUT_NOT_SUPPORTED_ERROR);
 					}
 				}
-			}
-			PDatasetAnalysis.analyze(pathToInput, pathToOutput, cellSizeInDegrees, timeStepSize, outputNumber, neighborDistance);
-		}
+			}*/
+		double cellSizeInDegrees = conf.getDouble("process.spatialCellSizeInDegrees");
+		double timeStepSize = conf.getDouble("process.spatialCellSizeInDegrees");
+		int outputNumber = conf.getInt("process.k");
+		int neighborDistance = conf.getInt("process.h");
+		SparkSession spark = SparkSession.builder().appName("Hotspot analysis").master(conf.getString("spark.master")).getOrCreate();
+		String tmpFolder = new Date().getTime() + "";
+		Params params = Preprocess.doPreprocess(spark, tmpFolder);
+		params.executionStart = executionStart;
+		params.requestId = conf.getLong("process.requestId");
+		PDatasetAnalysis.analyze(tmpFolder, tmpFolder + ".out", params, spark);
 	}
 }

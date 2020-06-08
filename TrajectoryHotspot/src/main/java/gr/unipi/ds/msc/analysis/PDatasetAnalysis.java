@@ -1,5 +1,8 @@
 package gr.unipi.ds.msc.analysis;
 
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
+import gr.unipi.ds.msc.common.AppConfig;
 import gr.unipi.ds.msc.utils.accumulator.*;
 import gr.unipi.ds.msc.utils.broadcast.Params;
 import gr.unipi.ds.msc.utils.broadcast.Statistics;
@@ -7,22 +10,19 @@ import gr.unipi.ds.msc.utils.entity.Cell;
 import gr.unipi.ds.msc.utils.entity.TrajectoryPoint;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.spark.Partitioner;
-import org.apache.spark.SparkConf;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.api.java.function.FlatMapFunction;
-import org.apache.spark.api.java.function.PairFlatMapFunction;
-import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.broadcast.Broadcast;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.util.DoubleAccumulator;
 import scala.Tuple2;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class PDatasetAnalysis {
@@ -143,25 +143,84 @@ public class PDatasetAnalysis {
         );
     }
 
-    public static void analyze(String inputPath, String outputPath, double cellSizeInDegrees, double timeStepSize, int outputNumber, long neighborDistance) throws IOException {
-        SparkConf conf = new SparkConf().setAppName("New Dataset Analysis");
-        JavaSparkContext sc = new JavaSparkContext(conf);
+    private static String makeJsonOutputStr(Params params, List<Tuple2<Double, Long>> result) {
+        SimpleDateFormat outputDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        Config conf = AppConfig.getConfig();
+        StringBuilder jsonRes = new StringBuilder("{");
+
+        HashMap<String, String> generalInfo = new HashMap<>();
+        Date execStart = new Date();
+        execStart.setTime(params.executionStart);
+        Date execEnd = new Date();
+        execEnd.setTime(params.executionEnd);
+        generalInfo.put("executionStart", outputDateFormat.format(execStart));
+        generalInfo.put("executionEnd", outputDateFormat.format(execEnd));
+        generalInfo.put("requestId", params.requestId + "");
+
+        HashMap<String, String> paramsInfo = new HashMap<>();
+        paramsInfo.put("k", params.outputNumber + "");
+        paramsInfo.put("h", params.neighborDistance + "");
+        paramsInfo.put("spatialCellSizeInDegrees", params.cellSize + "");
+        paramsInfo.put("temporalCellSizeInDays", (params.dateStep / Params.dayInMillis) + "");
+        String inputType = conf.getString("input.source");
+        paramsInfo.put("datasourceDevice", inputType);
+        paramsInfo.put("datasourceFormat", conf.getString("input.type"));
+        if (inputType.equals("file")) {
+            paramsInfo.put("datasourcePath", conf.getString("input.path"));
+        }
+        else if (inputType.equals("kafka")) {
+            paramsInfo.put("kafkaTopic", conf.getString("input.kafkaTopic"));
+        }
+
+        jsonRes.append("\"generalInfo\":").
+                append(makePlainJsonStringFromMap(generalInfo)).
+                append(",\"params\":").
+                append(makePlainJsonStringFromMap(paramsInfo)).
+                append(",\"outputResult\": [");
+
+        int i = 0;
+        for (Tuple2<Double, Long> t : result) {
+            HashMap<String, String> outputMap = new HashMap<>();
+            Cell c = new Cell(new Tuple2<>(t._2, t._1), params);
+            outputMap.put("polygonWKT", c.getPolygonWkt());
+            outputMap.put("temporalStart", c.getTemporalStartStr(outputDateFormat));
+            outputMap.put("temporalEnd", c.getTemporalEndStr(outputDateFormat));
+            outputMap.put("zScore", t._1 + "");
+            jsonRes.append(makePlainJsonStringFromMap(outputMap));
+            if (++i != result.size()) {
+                jsonRes.append(',');
+            }
+        }
+
+        jsonRes.append("]}");
+        return jsonRes.toString();
+    }
+
+    private static String makePlainJsonStringFromMap(Map<String, String> map) {
+        StringBuilder builder = new StringBuilder("{");
+        for (Map.Entry<String, String> kv: map.entrySet()) {
+            builder.append('\"');
+            builder.append(kv.getKey());
+            builder.append("\":\"");
+            builder.append(kv.getValue());
+            builder.append("\",");
+        }
+        builder.deleteCharAt(builder.length() - 1);
+        builder.append('}');
+        return builder.toString();
+    }
+
+    public static void analyze(String inputPath, String outputPath, Params params, SparkSession spark) throws IOException {
+        JavaSparkContext sc = JavaSparkContext.fromSparkContext(spark.sparkContext());
         FileSystem fs = FileSystem.get(sc.hadoopConfiguration());
         BufferedWriter output = new BufferedWriter(new OutputStreamWriter(fs.create(new Path(outputPath)), "UTF-8"));
-        output.write("Datacron new Dataset Analysis \n");
-        output.write("----------------------------- \n");
-        output.write("Cell size in degrees used: "+ cellSizeInDegrees + "\n");
-        output.write("Time step size in days: "+ timeStepSize + "\n");
-        output.write("Number of top-k displayed: " + outputNumber + "\n");
-        output.write("Neighbour Distance: " + neighborDistance + "\n");
-        output.write("--------------------------------------------------");
         try {
             if (inputPath.charAt(inputPath.length() - 1) != '/') {
                 inputPath += '/';
             }
             inputPath += '*';
 
-            Broadcast<Params> broadcastParams = doPreProcessingStep(sc, inputPath, cellSizeInDegrees, timeStepSize, outputNumber, neighborDistance);
+            Broadcast<Params> broadcastParams = sc.broadcast(params);
 
             JavaPairRDD<Long, Double> attributeValuesRDD = calculateAttributeValuesSolution1(sc, inputPath, broadcastParams);
 
@@ -169,18 +228,14 @@ public class PDatasetAnalysis {
 
             JavaPairRDD<Double, Long> zScoresRDD = calculateGetisOrd(attributeValuesRDD, broadcastStatistics, broadcastParams);
 
-            List<Tuple2<Double, Long>> result = zScoresRDD.sortByKey(false).take(outputNumber);
+            List<Tuple2<Double, Long>> result = zScoresRDD.sortByKey(false).take(params.outputNumber);
 
-            output.write("\n \n");
-            output.write("Results: \n");
-            output.write("----------------------------------------------------------- \n");
-            for (int i = 0; i < result.size(); i++) {
-                output.write(result.get(i)._2 + ",  " + result.get(i)._1 + ",  " + "\n");
-            }
+            params.executionEnd = System.currentTimeMillis();
+
+            output.write(makeJsonOutputStr(params, result));
+
         } finally {
             output.close();
         }
-        sc.close();
-        sc.stop();
     }
 }
